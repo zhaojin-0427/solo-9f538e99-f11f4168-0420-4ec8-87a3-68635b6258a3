@@ -96,6 +96,64 @@ def main() -> int:
     assert rejected.status_code == 409, rejected.text
     print("deleted-indicator upload rejected:", rejected.json()["detail"])
 
+    # ------------------------------------------------------------------
+    # 核对发布：对旧快照里的同键实测做一对一配对核对
+    # ------------------------------------------------------------------
+    nitrate_id = next(i["indicator_id"] for i in c.get("/schema").json()["indicators"]
+                      if i["name"] == "硝酸盐")
+    # 失败先行：容差太严配不上 -> 409，结构化返回缺失/多余与来源，且无任何发布
+    fail = c.post("/verification/publish", json={
+        "snapshot_id": snap, "station": "S1",
+        "sampled_at": "2026-01-01T00:00:00Z", "indicator_id": nitrate_id,
+        "references": [
+            {"value": 99.0, "tolerance": 0.1, "source": "交接单-坏值"},
+            {"value": 11.5, "tolerance": 0.05, "source": "交接单-正常值"},
+        ],
+    })
+    assert fail.status_code == 409, fail.text
+    fd = fail.json()["detail"]
+    print("check failed as expected:", fd["reason"], "| matched:", fd["matched_pairs"],
+          "| extra:", fd["extra_measured"], "| missing:", fd["missing_references"])
+    assert c.get("/analysis/published").json()["count"] == 0
+
+    # 成功发布：11.5 vs 11.50（容差 0.1）
+    ok = c.post("/verification/publish", json={
+        "snapshot_id": snap, "station": "S1",
+        "sampled_at": "2026-01-01T00:00:00Z", "indicator_id": nitrate_id,
+        "references": [{"value": 11.50, "tolerance": 0.1, "source": "交接单-WQ-001"}],
+    })
+    assert ok.status_code == 200, ok.text
+    publication_id = ok.json()["publication_id"]
+    print("published:", ok.json())
+
+    # 重复发布被拒，原有发布不变
+    dup = c.post("/verification/publish", json={
+        "snapshot_id": snap, "station": "S1",
+        "sampled_at": "2026-01-01T00:00:00Z", "indicator_id": nitrate_id,
+        "references": [{"value": 11.50, "tolerance": 0.1}],
+    })
+    assert dup.status_code == 409 and "已发布" in dup.json()["detail"]
+
+    # 分析读取：只看到已发布记录，含双方来源；指标名固化为发布时快照里的名字
+    listing = c.get("/analysis/published").json()
+    assert listing["count"] == 1
+    frozen_name = listing["publications"][0]["indicator_name"]
+    detail = c.get(f"/analysis/published/{publication_id}").json()
+    assert detail["indicator_name"] == frozen_name == "硝酸盐"  # 快照在改名后创建
+    assert detail["pairs"][0]["measured_shard_id"] >= 1
+    assert detail["pairs"][0]["reference_source"] == "交接单-WQ-001"
+    print("analysis detail:", detail)
+
+    # 发布后再改名，已发布结果的固化名不变
+    c.post("/schema/indicators/rename", json={"old_name": "硝酸盐", "new_name": "硝态氮"}).raise_for_status()
+    detail2 = c.get(f"/analysis/published/{publication_id}").json()
+    assert detail2["indicator_name"] == "硝酸盐"
+    print("frozen name survives rename:", detail2["indicator_name"])
+
+    # 原 /rows 仍可读原始值，未发布实测不会出现在分析入口
+    assert c.get("/rows", params={"snapshot_id": snap}).json()["total_rows"] == 3
+    assert c.get("/analysis/published", params={"station": "S2"}).json()["count"] == 0
+
     print("\nSMOKE OK")
     return 0
 

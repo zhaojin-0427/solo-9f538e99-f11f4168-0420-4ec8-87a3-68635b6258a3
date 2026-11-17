@@ -17,6 +17,9 @@ FIXED_COLUMNS = (STATION_COLUMN, SAMPLED_AT_COLUMN)
 # 同一时刻最多允许存在的可空浮点指标数量
 MAX_INDICATORS = 8
 
+# 一次核对允许的对照值数量上限，同时也是同键可配对实测值的数量上限
+MAX_CHECK_VALUES = 20
+
 # 指标身份列在 Parquet 分片中的列名前缀，避免与固定字段冲突
 INDICATOR_COLUMN_PREFIX = "i"
 

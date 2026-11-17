@@ -83,11 +83,41 @@ CREATE TABLE IF NOT EXISTS snapshot_shards (
     PRIMARY KEY (snapshot_id, shard_id)
 );
 
+-- 核对发布：一组同快照/站点/时刻/指标身份的实测与对照值全部一对一配对成功后整组发布。
+-- 行只在配对完全成功的事务内插入；任何失败都整体回滚，不存在“半组发布”。
+CREATE TABLE IF NOT EXISTS publications (
+    publication_id  INTEGER PRIMARY KEY AUTOINCREMENT,
+    snapshot_id     INTEGER NOT NULL REFERENCES snapshots(snapshot_id),
+    station         TEXT NOT NULL,
+    sampled_at      TEXT NOT NULL,                 -- 归一化后的 UTC 微秒时刻
+    indicator_id    INTEGER NOT NULL REFERENCES indicators(indicator_id),
+    indicator_name  TEXT NOT NULL,                 -- 发布时刻固化的指标名，后续改名不影响
+    pair_count      INTEGER NOT NULL CHECK (pair_count BETWEEN 1 AND 20),
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    UNIQUE (snapshot_id, station, sampled_at, indicator_id)
+);
+
+-- 发布明细：每条配对的实测与对照值及双方来源，随发布整组原子写入
+CREATE TABLE IF NOT EXISTS publication_pairs (
+    publication_id       INTEGER NOT NULL REFERENCES publications(publication_id),
+    pair_position        INTEGER NOT NULL,
+    measured_value       REAL NOT NULL,
+    measured_shard_id    INTEGER NOT NULL REFERENCES shards(shard_id),
+    measured_row_index   INTEGER NOT NULL,         -- 分片 Parquet 内的物理行号（0 起）
+    reference_value      REAL NOT NULL,
+    tolerance            REAL NOT NULL CHECK (tolerance >= 0),
+    abs_diff             REAL NOT NULL CHECK (abs_diff >= 0),
+    reference_source     TEXT,                     -- 对照值来源（由移交请求提供，可空）
+    PRIMARY KEY (publication_id, pair_position)
+);
+
 CREATE INDEX IF NOT EXISTS idx_indicators_active ON indicators(active);
 CREATE INDEX IF NOT EXISTS idx_version_indicators_version
     ON version_indicators(version_id);
 CREATE INDEX IF NOT EXISTS idx_shard_indicators_indicator
     ON shard_indicators(indicator_id);
+CREATE INDEX IF NOT EXISTS idx_publications_lookup
+    ON publications(snapshot_id, station, sampled_at, indicator_id);
 """
 
 
