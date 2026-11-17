@@ -1,0 +1,15 @@
+services:
+  water-quality-api:
+    build: .
+    image: water-quality-api:latest
+    container_name: water-quality-api
+    ports:
+      - "8000:8000"
+    environment:
+      DATA_DIR: /data
+    volumes:
+      - water_quality_data:/data
+    restart: unless-stopped
+
+volumes:
+  water_quality_data:
